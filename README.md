@@ -3,7 +3,6 @@ A robotic arm based on Raspberry Pi.
 
 Setting up in a Raspberry Pi may take you a lot of time, and there are too many libraries needed, so we write a python program to do the most of works for you.
 
-NOTE: If you want to know the exact details of the program, you can skip this chapter.
 NOTE: This setup.py program is needed to download and install a lot of applications and libraries, and sometimes the server or internet may break down, which may lead to some problems that the setup.py could not fix. Then you must set up a raspberry pi yourself, by following the instructions of next chapter named Set Up a Raspberry Pi.
 
 Download the program of the PiCar-B.
