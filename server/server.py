@@ -14,6 +14,7 @@ import argparse
 import i2c_lcd1602
 import threading
 import datetime
+import socket
 
 #MPU_6050
 try:
@@ -83,12 +84,13 @@ pwm3_max = 500
 
 #Global Variables.
 clkLastState = GPIO.input(clk)
-butSwitch    = 0
-butMax       = 4
-Tolerance    = 1.5
+butSwitch	= 0
+butMax	   = 4
+Tolerance	= 1.5
 longPress_I  = 12
 longPress_II = 77
-mpu_speed    = 0.1
+mpu_speed	= 0.1
+remote_speed = 3
 
 pwm0 = 300
 pwm1 = 300
@@ -100,11 +102,11 @@ old_pwm1 = pwm1
 old_pwm2 = pwm2
 old_pwm3 = pwm3
 
-loop_cunt    = 0
-loop_max     = 300
+loop_cunt	= 0
+loop_max	 = 300
 loop_mpu_max = 350
 ModeSwitch   = 1
-LED_set      = 1
+LED_set	  = 1
 
 lcd_last_line1 = ''
 lcd_last_line2 = ''
@@ -523,7 +525,7 @@ def lcdled_threading():
 		pass
 
 
-def justment():
+def jt():
 	global lcd_new_line1, butSwitch, pwm0_mpu, pwm1_mpu, pwm2_mpu, pwm3_mpu, last_step_0, last_step_1, last_step_2, last_step_3, command_input_stu, TL_setting
 	if ModeSwitch == 1:
 		lcd_new_line1  = '<Rotary Encoder>'
@@ -930,29 +932,96 @@ base_move_threading=threading.Thread(target=base_move_thread) #Define a thread f
 base_move_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
 base_move_threading.start()									 #Thread starts
 
+def remote():
+	global pwm0, pwm1, pwm2, pwm3, remote_speed
+	print('xxx')
+	HOST = ''
+	PORT = 10223							  #Define port serial 
+	BUFSIZ = 1024							 #Define buffer size
+	ADDR = (HOST, PORT)
+
+	'''
+	try:
+		s =socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+		s.connect(("1.1.1.1",80))
+		ipaddr_check=s.getsockname()[0]
+		s.close()
+		print(ipaddr_check)
+	except:
+		ap_threading=threading.Thread(target=ap_thread)   #Define a thread for data receiving
+		ap_threading.setDaemon(True)						  #'True' means it is a front thread,it would close when the mainloop() closes
+		ap_threading.start()								  #Thread starts
+
+		LED.colorWipe(Color(0,16,50))
+		time.sleep(1)
+		LED.colorWipe(Color(0,16,100))
+		time.sleep(1)
+		LED.colorWipe(Color(0,16,150))
+		time.sleep(1)
+		LED.colorWipe(Color(0,16,200))
+		time.sleep(1)
+		LED.colorWipe(Color(0,16,255))
+		time.sleep(1)
+		LED.colorWipe(Color(35,255,35))
+	'''
+
+	#try:
+	tcpSerSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	tcpSerSock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+	tcpSerSock.bind(ADDR)
+	tcpSerSock.listen(5)					  #Start server,waiting for client
+	print('waiting for connection...')
+	tcpCliSock, addr = tcpSerSock.accept()
+	print('...connected from :', addr)
+
+	while 1:
+		data = ''
+		data = str(tcpCliSock.recv(BUFSIZ).decode())
+		if not data:
+			continue
+		elif '0+' in data:
+			pwm0 += remote_speed
+		elif '0-' in data:
+			pwm0 -= remote_speed
+		elif '1+' in data:
+			pwm1 += remote_speed
+		elif '1-' in data:
+			pwm1 -= remote_speed
+		elif '2+' in data:
+			pwm2 += remote_speed
+		elif '2-' in data:
+			pwm2 -= remote_speed
+		elif '3+' in data:
+			pwm3 += remote_speed
+		elif '3-' in data:
+			pwm3 -= remote_speed
+	#except:
+		#pass
 
 
-
+remote_threading=threading.Thread(target=remote) #Define a thread for LCD
+remote_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
+remote_threading.start()									 #Thread starts
 
 #try:
 	#start_up()
 switch(1)
 
 while 1:
-	justment()
+	jt()
 	while ModeSwitch == 1:
 		if rotary_mode():
 			break
-	justment()
+	jt()
 	while ModeSwitch == 2:
 		if movement_mode():
 			break
-	justment()
+	jt()
 	while ModeSwitch == 3:
 		command_input()
 		if command_output():
 			break
-	justment()
+	jt()
 	while ModeSwitch == 4:
 		while TL_setting:
 			position_input()
