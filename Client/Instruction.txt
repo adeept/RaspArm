@@ -1,3 +1,34 @@
 for more information:
 
 www.adeept.com
+
+First of all, the program should be done in the SD card, including writing the Raspberry Pi system, 
+downloading and installing the Rasptank program. 
+
+Pay attention to the case sensitivity during process of git clone . The specific operation process 
+is in the document and manual. It will automatically start up at boot after the program is successfully installed. 
+
+You need to connect the driver board and the Raspberry Pi, and before turn it on, connect the servo with the driver board. 
+Wait until the servo rotates to specified position to assemble. 
+
+The servo is 20 teeth and will have an error of less than 9° during the installation process, which is normal.
+
+---------------------------------------------------------------------------------------------------------------------------
+
+The .py program in the folder client is the program required on the PC.
+The .py program in the folder server is the program required on the robot.
+
+This instruction focuses on the programs in the folder server. When you encounter problems, you can refer to this description to solve the problem.
+
+
+1.What should I do if the robot does not automatically run the program when I turn it on?
+First cause: the program is not installed completely, probably  because the server connection of the dependent libraries needed is unstable, resulting in incomplete download of the dependent libraries.The full version of the program needs to install the appropriate dependencies to run properly.
+Second cause: Linux is case sensitive.The case sensitvity of the name when you clone from Github is different from the one of the autostart file of the default path. 
+
+Solution: try the beta program - a program named serverTest.py in the folder server.
+If you need the beta program to run automatically  every time you boot, execute autorun.py - enter "2" to select the autorun beta - enter.
+If you need to change to the full version of the autorun program every time you boot, execute autorun.py - enter "1" to select the full version of autorun - enter.
+(For RaspArm, there is only one version.)
+
+The fun of creation lies in solving problems
+If you have any other questions, please e-mail us at support@adeept.com
