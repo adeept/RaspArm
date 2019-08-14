@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # File name   : servo.py
 # Description : Control Motor
-# Product	 : RaspTank  
+# Product	 : RaspAem
 # Website	 : www.adeept.com
 # E-mail	  : support@adeept.com
 # Author	  : William
-# Date	: 2018/12/27
+# Date	: 2019/08/14
 from RPi import GPIO
 import time
 import threading
