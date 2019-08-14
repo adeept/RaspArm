@@ -130,10 +130,6 @@ def socket_connect():	 #Call this function to connect with the server
 			info_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
 			info_threading.start()									 #Thread starts
 
-			video_threading=thread.Thread(target=opencv_r)		 #Define a thread for FPV and OpenCV
-			video_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-			video_threading.start()									 #Thread starts
-
 			break
 		else:
 			print("Cannot connecting to server,try it latter!")
@@ -157,24 +153,33 @@ def connect(event):	   #Call this function to connect with the server
 
 
 def call_Switch_1(event):
+	global Switch_1
 	if Switch_1 == 0:
 		tcpClicSock.send(('Switch_1_on').encode())
+		Switch_1 = 1
 	else:
 		tcpClicSock.send(('Switch_1_off').encode())
+		Switch_1 = 0
 
 
 def call_Switch_2(event):
+	global Switch_2
 	if Switch_2 == 0:
 		tcpClicSock.send(('Switch_2_on').encode())
+		Switch_2 = 1
 	else:
 		tcpClicSock.send(('Switch_2_off').encode())
+		Switch_2 = 0
 
 
 def call_Switch_3(event):
+	global Switch_3
 	if Switch_3 == 0:
 		tcpClicSock.send(('Switch_3_on').encode())
+		Switch_3 = 1
 	else:
 		tcpClicSock.send(('Switch_3_off').encode())
+		Switch_3 = 0
 
 
 def set_B(event):
