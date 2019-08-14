@@ -8,110 +8,123 @@
 # Date	: 2018/12/27
 from RPi import GPIO
 import time
+import threading
+import i2c_lcd1602
+import datetime
 import Adafruit_PCA9685
+
 from rpi_ws281x import *
 import argparse
-import i2c_lcd1602
-import threading
-import datetime
+import switch
+
+import psutil
+
 import socket
 
-#MPU_6050
-try:
-	from mpu6050 import mpu6050
-	import Kalman_filter
-	import PID
-	P = 5
-	I = 0.01
-	D = 0
-	X_pid = PID.PID()
-	X_pid.SetKp(P)
-	X_pid.SetKd(I)
-	X_pid.SetKi(D)
-	Y_pid = PID.PID()
-	Y_pid.SetKp(P)
-	Y_pid.SetKd(I)
-	Y_pid.SetKi(D)
-	kalman_filter_X =  Kalman_filter.Kalman_filter(0.001,0.1)
-	kalman_filter_Y =  Kalman_filter.Kalman_filter(0.001,0.1)
-	sensor = mpu6050(0x68)
-	mpu = 1
-except:
-	mpu = 0
-	print("use 'sudo pip3 install adafruit-pca9685' to install mpu6050, or check the wire connection.")
-	pass
+from mpu6050 import mpu6050
+import Kalman_filter
+kalman_filter_X =  Kalman_filter.Kalman_filter(0.001,0.1)
+kalman_filter_Y =  Kalman_filter.Kalman_filter(0.001,0.1)
+sensor = mpu6050(0x68)
+mpu = 1
+mpu_speed	= 1
+Tolerance	= 1.5
+auto_speed  = 2
 
-#LCD Screen
-#try:
-screen = i2c_lcd1602.Screen(bus=1, addr=0x27, cols=16, rows=2)
-screen.enable_backlight()
-lcd_show = 1
-#except:
-	#lcd_show = 0
-	#pass
 
-#Servos
-pwm = Adafruit_PCA9685.PCA9685()
-pwm.set_pwm_freq(50)
-
-#Set GPIOs for button.
-clk = 35
-dt = 36
-btn = 38
+clk = 19
+dt = 16
+btn = 20
 
 GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BOARD)
+GPIO.setmode(GPIO.BCM)
 GPIO.setup(clk, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(dt, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(btn, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
-#Interfaces
-port_0_speed = -3
-port_1_speed = 3
-port_2_speed = 3
-port_3_speed = 3
+number = 0
+old_number = number
+btn_input = 0
+setting_select = 1
+old_setting_select = setting_select
 
-speed_base = 0.01
+#PWM control
+PWM_0 = 300
+PWM_1 = 300
+PWM_2 = 300
+PWM_3 = 300
 
-pwm0_min = 100
-pwm0_max = 500
-pwm1_min = 100
-pwm1_max = 500
-pwm2_min = 100
-pwm2_max = 500
-pwm3_min = 100
-pwm3_max = 500
+PWM_0_OLD = PWM_0
+PWM_1_OLD = PWM_1
+PWM_2_OLD = PWM_2
+PWM_3_OLD = PWM_3
 
-#Global Variables.
-clkLastState = GPIO.input(clk)
-butSwitch	= 0
-butMax	   = 4
-Tolerance	= 1.5
-longPress_I  = 12
-longPress_II = 77
-mpu_speed	= 0.1
-remote_speed = 3
+PWM_0_MIN = 100
+PWM_1_MIN = 100
+PWM_2_MIN = 100
+PWM_3_MIN = 100
 
-pwm0 = 300
-pwm1 = 300
-pwm2 = 300
-pwm3 = 300
+PWM_0_MAX = 500
+PWM_1_MAX = 500
+PWM_2_MAX = 500
+PWM_3_MAX = 500
 
-old_pwm0 = pwm0
-old_pwm1 = pwm1
-old_pwm2 = pwm2
-old_pwm3 = pwm3
+PWM_select = 0
+old_PWM_select = PWM_select
+PWM_set = 0
 
-loop_cunt	= 0
-loop_max	 = 300
-loop_mpu_max = 350
-ModeSwitch   = 1
-LED_set	  = 1
+PWM_0_speed = 3
+PWM_1_speed = 3
+PWM_2_speed = 3
+PWM_3_speed = 3
+
+rotary_result = 0
 
 lcd_last_line1 = ''
 lcd_last_line2 = ''
 lcd_new_line1  = ''
 lcd_new_line2  = ''
+
+#Modes
+'''
+0 Switch
+1 <Rotary Encoder>
+2 <Movement Input>
+3 <Keys and Setps>
+4 <TimeLapse Mode>
+5 ---<Settings>---
+'''
+modeStates = 0
+
+pwm = Adafruit_PCA9685.PCA9685()
+pwm.set_pwm_freq(50)
+timestamp = datetime.datetime.now()
+lastChange = timestamp
+screen = i2c_lcd1602.Screen(bus=1, addr=0x27, cols=16, rows=2)
+screen.enable_backlight()
+
+DIR_step_0 = []
+DIR_step_1 = []
+DIR_step_2 = []
+DIR_step_3 = []
+
+mission_pwm0 = 300
+mission_pwm1 = 300
+mission_pwm2 = 300
+mission_pwm3 = 300
+
+timelapse_time   = []
+timelapse_frames = []
+
+time_set = 1
+frame_set = 1
+
+mission_deley_time = 0
+
+socket_speed = 1
+
+
+
 
 
 class LED:
@@ -151,124 +164,7 @@ class LED:
 	def set_color(self, color, num):
 		self.strip.setPixelColor(num, color)
 		self.strip.show()
-
-
-def rotary(speed):
-	global clkLastState, clkState
-	clkState = GPIO.input(clk)
-	dtState = GPIO.input(dt)
-	if clkState != clkLastState:
-		if dtState != clkState:
-			clkLastState = clkState
-			return -1*speed
-		else:
-			clkLastState = clkState
-			return 1*speed
-	else:
-		clkLastState = clkState
-		return 0
-	clkLastState = clkState
-
-
-def switch(mode):
-	global lcd_new_line1, lcd_new_line2, ModeSwitch
-	timestamp = datetime.datetime.now()
-	lastChange = timestamp
-	selet_num = mode
-	ModeSwitch = 6
-	while 1:
-		clkState = GPIO.input(clk)
-		dtState = GPIO.input(dt)
-		if clkState != clkLastState:
-			timestamp = datetime.datetime.now()
-			if (timestamp - lastChange).seconds >= 0.1:
-				lastChange = timestamp
-				if dtState != clkState:
-					selet_num -= 1
-				else:
-					selet_num += 1
-		if selet_num > 5:
-			selet_num = 1
-		elif selet_num < 1:
-			selet_num = 5
-		if selet_num ==  1:
-			lcd_new_line1 = 'Set: <1>-2-3-4-5'
-			lcd_new_line2 = '<Rotary Encoder>'
-		elif selet_num == 2:
-			lcd_new_line1 = 'Set: 1-<2>-3-4-5'
-			lcd_new_line2 = '<Movement Input>'
-		elif selet_num == 3:
-			lcd_new_line1 = 'Set: 1-2-<3>-4-5'
-			lcd_new_line2 = '<Keys and Setps>'
-		elif selet_num == 4:
-			lcd_new_line1 = 'Set: 1-2-3-<4>-5'
-			lcd_new_line2 = '<TimeLapse Mode>'
-		elif selet_num == 5:
-			lcd_new_line1 = 'Set: 1-2-3-4-<5>'
-			lcd_new_line2 = '---<Settings>---'
-
-		buttonPress = button(mode)
-		if buttonPress == 0:
-			ModeSwitch = selet_num
-			break
-		elif buttonPress == 1 or buttonPress == 2:
-			ModeSwitch = mode
-			break
-		time.sleep(0.001)
-		pass
-
-
-def button(mode_input):
-	'''
-	Short Press return 0
-	Long Press I return 1
-	Long Press II return 2
-	'''
-	global butSwitch, LED_set, command_input_stu, command_output_stu
-	butLast = 0
-	shortPress_stu   = 0
-	longPress_I_stu  = 0
-	longPress_II_stu = 0
-	while not GPIO.input(btn):
-		LED_thread = 0
-		led.set_color(Color(77, 0, 0), 4)
-		led.set_color(Color(77, 0, 0), 5)
-		butLast += 1
-		shortPress_stu = 1
-		if butLast > longPress_I:
-			command_output_stu = 0
-			shortPress_stu  = 0
-			longPress_I_stu = 1
-			butLast = 0
-			led_change = longPress_II
-			while not GPIO.input(btn):
-				led.colorWipe(Color(0, 0, led_change))
-				led_change -= 1
-				if led_change == 0:
-					longPress_I_stu  = 0
-					longPress_II_stu = 1
-					led.colorWipe(Color(0, longPress_II, longPress_II))
-					while not GPIO.input(btn):
-						pass
-		time.sleep(0.05)
-
-	if shortPress_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		return 0
-	elif longPress_I_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		return 1
-	elif longPress_II_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		if command_input_stu:
-			pass
-		else:
-			switch(mode_input)
-		return 2
-
+led = LED()
 
 def ctrl_range(raw, max_genout, min_genout):
 	global lcd_new_line2, LED_set
@@ -283,664 +179,784 @@ def ctrl_range(raw, max_genout, min_genout):
 	return int(raw_output)
 
 
-def dove_base(port, start, end, deley, pix, goal):
-	global old_pwm0, old_pwm1, old_pwm2, old_pwm3
-	if start < end:
-		for i in range(start, (end+pix), pix):
-			if goal == 0:
-				old_pwm0 = i
-				if end != pwm0:
-					break
-			elif goal == 1:
-				old_pwm1 = i
-				if end != pwm1:
-					break
-			elif goal == 2:
-				old_pwm2 = i
-				if end != pwm2:
-					break
-			elif goal == 3:
-				old_pwm3 = i
-				if end != pwm3:
-					break
-			print(i)
-			pwm.set_pwm(port, 0, i)
-			time.sleep(deley)
-	elif end < start:
-		for i in range(start, (end-pix), -pix):
-			if goal == 0:
-				old_pwm0 = i
-				if end != pwm0:
-					break
-			elif goal == 1:
-				old_pwm1 = i
-				if end != pwm1:
-					break
-			elif goal == 2:
-				old_pwm2 = i
-				if end != pwm2:
-					break
-			elif goal == 3:
-				old_pwm3 = i
-				if end != pwm3:
-					break
-			print(i)
-			pwm.set_pwm(port, 0, i)
-			time.sleep(deley)
+def LCD_change():
+	global lcd_new_line1, lcd_new_line2
+	if old_setting_select != setting_select:
+		led.colorWipe(Color(0, 0, 0))
+	if old_PWM_select != PWM_select:
+		led.colorWipe(Color(0, 0, 0))
+	if modeStates == 0:
+		if setting_select == 1:
+			lcd_new_line1  = 'Set: <1>-2-3-4-5'
+			lcd_new_line2  = '<Rotary Encoder>'
+			led.set_color(Color(0, 77, 13), 0)
+		elif setting_select == 2:
+			lcd_new_line1  = 'Set: 1-<2>-3-4-5'
+			lcd_new_line2  = '<Movement Input>'
+			led.set_color(Color(0, 77, 13), 1)
+		elif setting_select == 3:
+			lcd_new_line1  = 'Set: 1-2-<3>-4-5'
+			lcd_new_line2  = '<Keys and Setps>'
+			led.set_color(Color(0, 77, 13), 2)
+		elif setting_select == 4:
+			lcd_new_line1  = 'Set: 1-2-3-<4>-5'
+			lcd_new_line2  = '<TimeLapse Mode>'
+			led.set_color(Color(0, 77, 13), 3)
+		elif setting_select == 5:
+			lcd_new_line1  = 'Set: 1-2-3-4-<5>'
+			lcd_new_line2  = '---<Settings>---'
+			led.set_color(Color(0, 77, 13), 4)
+	elif modeStates == 1:
+		lcd_new_line1  = '<Rotary Encoder>'
+		if PWM_select == 0:
+			lcd_new_line2  = 'Port:0 PWM:%d'%PWM_0
+			led.set_color(Color(0, 77, 13), 0)
+		elif PWM_select == 1:
+			lcd_new_line2  = 'Port:1 PWM:%d'%PWM_1
+			led.set_color(Color(0, 77, 13), 1)
+		elif PWM_select == 2:
+			lcd_new_line2  = 'Port:2 PWM:%d'%PWM_2
+			led.set_color(Color(0, 77, 13), 2)
+		elif PWM_select == 3:
+			lcd_new_line2  = 'Port:3 PWM:%d'%PWM_3
+			led.set_color(Color(0, 77, 13), 3)
+	elif modeStates == 2:
+		lcd_new_line1  = '<Movement Input>'
+		if PWM_select == 0:
+			lcd_new_line2  = 'Port:0 PWM:%d'%PWM_0
+			led.set_color(Color(0, 77, 13), 0)
+		elif PWM_select == 1:
+			lcd_new_line2  = 'Port:1 PWM:%d'%PWM_1
+			led.set_color(Color(0, 77, 13), 1)
+		elif PWM_select == 2:
+			lcd_new_line2  = 'Port:2 PWM:%d'%PWM_2
+			led.set_color(Color(0, 77, 13), 2)
+		elif PWM_select == 3:
+			lcd_new_line2  = 'Port:3 PWM:%d'%PWM_3
+			led.set_color(Color(0, 77, 13), 3)
+	elif modeStates == 3:
+		lcd_new_line1  = '<Keys and Steps>'
+		if PWM_set == 1:
+			if PWM_select == 0:
+				lcd_new_line2  = 'Port:0 PWM:%d'%PWM_0
+				led.set_color(Color(0, 77, 13), 0)
+			elif PWM_select == 1:
+				lcd_new_line2  = 'Port:1 PWM:%d'%PWM_1
+				led.set_color(Color(0, 77, 13), 1)
+			elif PWM_select == 2:
+				lcd_new_line2  = 'Port:2 PWM:%d'%PWM_2
+				led.set_color(Color(0, 77, 13), 2)
+			elif PWM_select == 3:
+				lcd_new_line2  = 'Port:3 PWM:%d'%PWM_3
+				led.set_color(Color(0, 77, 13), 3)
+		elif PWM_set == 2:
+			lcd_new_line1 = 'PWM0:%dPWM1:%d'%(mission_pwm0,mission_pwm1)
+			lcd_new_line2 = 'PWM2:%dPWM3:%d'%(mission_pwm2,mission_pwm3)
+			led.colorWipe(Color(0, 77, 13))
+	elif modeStates == 4:
+		lcd_new_line1  = '<TimeLapse Mode>'
+		if PWM_set == 1:
+			if PWM_select == 0:
+				lcd_new_line2  = 'Port:0 PWM:%d'%PWM_0
+				led.set_color(Color(0, 77, 13), 0)
+			elif PWM_select == 1:
+				lcd_new_line2  = 'Port:1 PWM:%d'%PWM_1
+				led.set_color(Color(0, 77, 13), 1)
+			elif PWM_select == 2:
+				lcd_new_line2  = 'Port:2 PWM:%d'%PWM_2
+				led.set_color(Color(0, 77, 13), 2)
+			elif PWM_select == 3:
+				lcd_new_line2  = 'Port:3 PWM:%d'%PWM_3
+				led.set_color(Color(0, 77, 13), 3)
+		elif PWM_set == 2:
+			lcd_new_line2  = 'Time Input%d'%time_set
+		elif PWM_set == 3:
+			lcd_new_line2  = 'FrameInput%d'%frame_set
+		elif PWM_set == 4:
+			lcd_new_line1 = 'PWM0:%dPWM1:%d'%(mission_pwm0,mission_pwm1)
+			lcd_new_line2 = 'PWM2:%dPWM3:%d'%(mission_pwm2,mission_pwm3)
+			led.colorWipe(Color(0, 77, 13))
+	LCD_screen.resume()
 
 
-def base_move_thread():
-	global old_pwm0, old_pwm1, old_pwm2, old_pwm3, TL_start
-	while 1:
-		if old_pwm0 != pwm0:
-			pwm.set_pwm(0,0,pwm0)
-			old_pwm0 = pwm0
-		if old_pwm1 != pwm1:
-			pwm.set_pwm(1,0,pwm1)
-			old_pwm1 = pwm1
-		if old_pwm2 != pwm2:
-			pwm.set_pwm(2,0,pwm2)
-			old_pwm2 = pwm2
-		if old_pwm3 != pwm3:
-			pwm.set_pwm(3,0,pwm3)
-			old_pwm3 = pwm3
-		if command_output_stu:
-			for i in range(0,len(servo_step_0)):
-				if command_output_stu:
-					dove_move(servo_step_0[i],servo_step_1[i],servo_step_2[i],servo_step_3[i])
-				print(i)
-		if TL_start:
-			old_pwm0 = TL_step_0[0]
-			old_pwm1 = TL_step_1[0]
-			old_pwm2 = TL_step_2[0]
-			old_pwm3 = TL_step_3[0]
-			for i in range(1,len(TL_step_0)):
-				timelapse(TL_step_0[i],TL_step_1[i],TL_step_2[i],TL_step_3[i], timelapse_time[i-1], timelapse_frames[i-1])
-				print(i)
-			TL_start = 0
-		time.sleep(0.01)
+class LCD_ctrl(threading.Thread):
+	def __init__(self, *args, **kwargs):
+		super(LCD_ctrl, self).__init__(*args, **kwargs)
+		self.__flag = threading.Event()
+		self.__flag.set()
+		self.__running = threading.Event()
+		self.__running.set()
 
-
-def rotary_mode():
-	global butSwitch, lcd_new_line1, lcd_new_line2, pwm0, pwm1, pwm2, pwm3
-
-	buttonPress = button(1)
-	if buttonPress == 0:
-		butSwitch += 1
-		if butSwitch > 3:
-			butSwitch = 0
-	elif buttonPress == 2:
-		return 1
-
-	if butSwitch == 0:
-		pwm0 += rotary(port_0_speed)
-		pwm0 = ctrl_range(pwm0, pwm0_max, pwm0_min)
-		lcd_new_line2  = 'Port:0 PWM:%d'%pwm0
-	elif butSwitch == 1:
-		pwm1 += rotary(port_1_speed)
-		pwm1 = ctrl_range(pwm1, pwm1_max, pwm1_min)
-		lcd_new_line2  = 'Port:1 PWM:%d'%pwm1
-	elif butSwitch == 2:
-		pwm2 += rotary(port_2_speed)
-		lcd_new_line2  = 'Port:2 PWM:%d'%pwm2
-		pwm2 = ctrl_range(pwm2, pwm2_max, pwm2_min)
-	elif butSwitch == 3:
-		pwm3 += rotary(port_3_speed)
-		lcd_new_line2  = 'Port:3 PWM:%d'%pwm3
-		pwm3 = ctrl_range(pwm3, pwm3_max, pwm3_min)
-
-	time.sleep(0.001)
-
-
-def movement_mode():
-	global pwm0, pwm1, pwm2, pwm3, butSwitch, lcd_new_line2, pwm0_mpu, pwm1_mpu, pwm2_mpu, pwm3_mpu, old_pwm0, old_pwm1, old_pwm2, old_pwm3
-	if mpu:
-		accelerometer_data = sensor.get_accel_data()
-		X = accelerometer_data['x']
-		X = kalman_filter_X.kalman(X)
-		Y = accelerometer_data['y']
-		Y = kalman_filter_Y.kalman(Y)
-		if abs(Y) > Tolerance:
-			pwm0_mpu += Y*mpu_speed
-			print(Y)
-			print('mpu:%f'%pwm0_mpu)
-			pwm0 = ctrl_range(pwm0_mpu, pwm0_max, pwm0_min)
-			print(pwm0)
-
-		buttonPress = button(2)
-		if buttonPress == 0:
-			if butSwitch == 1:
-				butSwitch = 2
-			else:
-				butSwitch = 1
-			print(buttonPress)
-			print(butSwitch)
-		elif buttonPress == 2:
-			return 1
-
-		pwm3_mpu = old_pwm3
-		pwm3_mpu += rotary(port_3_speed)
-		pwm3 = ctrl_range(pwm3_mpu, pwm3_max, pwm3_min)
-
-		if old_pwm3 != pwm3:
-			pwm.set_pwm(3, 0, pwm3)
-			lcd_new_line2  = 'Port:3 PWM:%d'%pwm3
-			return 0
-
-		if abs(X) > Tolerance:
-			if butSwitch == 1:
-				pwm1_mpu += X*mpu_speed
-				pwm1 = ctrl_range(pwm1_mpu, pwm1_max, pwm1_min)
-				lcd_new_line2  = 'Port:1 PWM:%d'%pwm1
-				return 0
-			elif butSwitch == 2:
-				pwm2_mpu += X*mpu_speed
-				pwm2 = ctrl_range(pwm2_mpu, pwm2_max, pwm2_min)
-				lcd_new_line2  = 'Port:2 PWM:%d'%pwm2
-				return 0
-
-		time.sleep(0.001)
-	else:
-		switch(2)
-		pass
-
-
-def lcdled_threading():
-	global lcd_last_line1, lcd_last_line2, LED_set
-	if lcd_show:
-		screen.enable_backlight()
-	timestamp = datetime.datetime.now()
-	lastChange = timestamp
-	old_lcd_new_line1 = ''
-
-	while 1:
-		if lcd_show:
+	def run(self):
+		global lcd_last_line1, lcd_last_line2, lastChange
+		while self.__running.isSet():
+			self.__flag.wait()	  # 为True时立即返回, 为False时阻塞直到内部的标识位为True后返回
+			timestamp = datetime.datetime.now()
 			if lcd_last_line1 != lcd_new_line1 or lcd_last_line2 != lcd_new_line2:
-				timestamp = datetime.datetime.now()
 				if (timestamp - lastChange).seconds >= 0.01:
 					screen.display_data(lcd_new_line1, lcd_new_line2)
 					lastChange = timestamp
 					lcd_last_line1 = lcd_new_line1
 					lcd_last_line2 = lcd_new_line2
-					pass
-				continue
+				else:
+					time.sleep(0.01)
+					screen.display_data(lcd_new_line1, lcd_new_line2)
+					lastChange = timestamp
+					lcd_last_line1 = lcd_new_line1
+					lcd_last_line2 = lcd_new_line2
+			LCD_screen.pause()
+
+	def pause(self):
+		self.__flag.clear()	 # 设置为False, 让线程阻塞
+
+	def resume(self):
+		self.__flag.set()	# 设置为True, 让线程停止阻塞
+
+	def stop(self):
+		self.__flag.set()	   # 将线程从暂停状态恢复, 如何已经暂停的话
+		self.__running.clear()		# 设置为False  
+
+
+def rotary_encoder_Mode():
+	global PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD
+	if PWM_select == 0:
+		pwm.set_pwm(0, 0, PWM_0)
+	elif PWM_select == 1:
+		pwm.set_pwm(1, 0, PWM_1)
+	elif PWM_select == 2:
+		pwm.set_pwm(2, 0, PWM_2)
+	elif PWM_select == 3:
+		pwm.set_pwm(3, 0, PWM_3)
+	PWM_0_OLD = PWM_0
+	PWM_1_OLD = PWM_1
+	PWM_2_OLD = PWM_2
+	PWM_3_OLD = PWM_3
+
+
+def movement_Mode():
+	global PWM_0, PWM_1, PWM_2, PWM_3, PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD
+	accelerometer_data = sensor.get_accel_data()
+	X = accelerometer_data['x']
+	X = kalman_filter_X.kalman(X)
+	Y = accelerometer_data['y']
+	Y = kalman_filter_Y.kalman(Y)
+	if abs(Y) > Tolerance:
+		print(Y)
+		PWM_0 += Y*mpu_speed
+		print(PWM_0)
+		PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+		pwm.set_pwm(0, 0, PWM_0)
+		PWM_0_OLD = PWM_0
+
+	if PWM_3_OLD != PWM_3:
+		pwm.set_pwm(3, 0, PWM_3)
+		PWM_3_OLD = PWM_3
+
+	if abs(X) > Tolerance:
+		if PWM_select == 1:
+			PWM_1 += X*mpu_speed
+			PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+			pwm.set_pwm(1, 0, PWM_1)
+			PWM_1_OLD = PWM_1
+		elif PWM_select == 2:
+			PWM_2 += X*mpu_speed
+			PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+			pwm.set_pwm(2, 0, PWM_2)
+			PWM_2_OLD = PWM_2
+	time.sleep(0.1)
+
+
+def button_input_change(args):
+	global modeStates, PWM_select, PWM_set, setting_select, btn_input, old_PWM_select, old_setting_select, time_set, frame_set
+	old_PWM_select = PWM_select
+	old_setting_select = setting_select
+	if modeStates == 1:
+		if args == 1:
+			#PWM change
+			PWM_select += 1
+			if PWM_select == 4:
+				PWM_select = 0
+		elif args == 2:
+			#Nothing
+			pass
+		elif args == 3:
+			#to switch
+			modeStates = 0
+	elif modeStates == 2:
+		if args == 1:
+			#PWM change
+			if PWM_select == 2:
+				PWM_select = 1
+			elif PWM_select == 1:
+				PWM_select = 2
+			else:
+				PWM_select = 1
+		elif args == 2:
+			#Nothing
+			pass
+		elif args == 3:
+			#to switch
+			modeStates = 0
+
+
+	elif modeStates == 3:
+		if args == 1:
+			#PWM change
+			PWM_select += 1
+			if PWM_select == 4:
+				PWM_select = 0
+		elif args == 2:
+			#PWM setting mode on
+			if PWM_set == 1:
+				DIR_step_0.append(PWM_0)
+				DIR_step_1.append(PWM_1)
+				DIR_step_2.append(PWM_2)
+				DIR_step_3.append(PWM_3)
+				print(DIR_step_0)
+			else:
 				pass
+		elif args == 3:
+			#to switch
+			if PWM_set == 1:
+				PWM_set = 2
+			elif PWM_set == 2:
+				PWM_set = 0
+				modeStates = 0
 
-		if LED_set:
-			led.colorWipe(Color(0, 0, 0))
-			if butSwitch == 0:
-				led.set_color(Color(0, 77, 13), 0)
-			elif butSwitch == 1:
-				led.set_color(Color(0, 77, 13), 1)
-			elif butSwitch == 2:
-				led.set_color(Color(0, 77, 13), 2)
-			elif butSwitch == 3:
-				led.set_color(Color(0, 77, 13), 3)
 
-			if ModeSwitch == 1:
-				led.set_color(Color(0, 12, 77), 4)
-				led.set_color(Color(0, 12, 77), 5)
-			elif ModeSwitch == 2:
-				led.set_color(Color(12, 77, 0), 4)
-				led.set_color(Color(12, 77, 0), 5)
-			elif ModeSwitch == 3:
-				led.set_color(Color(77, 24, 0), 4)
-				led.set_color(Color(77, 24, 0), 5)
-			elif ModeSwitch == 4:
-				led.set_color(Color(12, 77, 0), 4)
-				led.set_color(Color(77, 24, 0), 5)
-			elif ModeSwitch == 5:
-				led.set_color(Color(24, 77, 0), 4)
-				led.set_color(Color(24, 77, 0), 5)
-			elif ModeSwitch == 6:
-				led.colorWipe(Color(77, 24, 0))
+	elif modeStates == 4:
+		if args == 1:
+			#PWM change
+			PWM_select += 1
+			if PWM_select == 4:
+				PWM_select = 0
+		elif args == 2:
+			#PWM setting mode on
+			if PWM_set == 1:
+				DIR_step_0.append(PWM_0)
+				DIR_step_1.append(PWM_1)
+				DIR_step_2.append(PWM_2)
+				DIR_step_3.append(PWM_3)
+				print(DIR_step_0)
+				PWM_set = 2
+			elif PWM_set == 2:
+				timelapse_time.append(time_set)
+				time_set = 1
+				PWM_set = 3
+			elif PWM_set == 3:
+				timelapse_frames.append(frame_set)
+				frame_set = 1
+				PWM_set = 1
+		elif args == 3:
+			#to switch
+			if PWM_set == 1:
+				PWM_set = 4
+			elif PWM_set == 4:
+				modeStates = 0
+	elif modeStates == 5:
+		modeStates = 0
 
-			LED_set = 0
-			continue
-		elif lcd_new_line2 == 'REACHING MAX PWM' or lcd_new_line2 == 'REACHING MIN PWM':
-			led.set_color(Color(77, 7, 0), 4)
-			led.set_color(Color(77, 7, 0), 5)
-			LED_set = 1
-			time.sleep(0.3)
 
-		if 'Set:' in lcd_new_line1:
-			if lcd_new_line1 != old_lcd_new_line1:
-				led.colorWipe(Color(77, 24, 0))
-				if lcd_new_line1 == 'Set: <1>-2-3-4-5':
-					led.set_color(Color(0, 77, 13), 0)
-					old_lcd_new_line1 = lcd_new_line1
-				elif lcd_new_line1 == 'Set: 1-<2>-3-4-5':
-					led.set_color(Color(0, 77, 13), 1)
-					old_lcd_new_line1 = lcd_new_line1
-				elif lcd_new_line1 == 'Set: 1-2-<3>-4-5':
-					led.set_color(Color(0, 77, 13), 2)
-					old_lcd_new_line1 = lcd_new_line1
-				elif lcd_new_line1 == 'Set: 1-2-3-<4>-5':
-					led.set_color(Color(0, 77, 13), 3)
-					old_lcd_new_line1 = lcd_new_line1
-				elif lcd_new_line1 == 'Set: 1-2-3-4-<5>':
-					led.set_color(Color(0, 77, 13), 4)
-					old_lcd_new_line1 = lcd_new_line1
-		time.sleep(0.01)
+	elif modeStates == 0:
+		if args == 1:
+			if modeStates == 2:
+				PWM_select = 2
+			modeStates = setting_select
+	btn_input = 0
+
+
+def rotary_input_change():
+	global PWM_0, PWM_1, PWM_2, PWM_3, setting_select, rotary_result, mission_deley_time, time_set, frame_set
+	if modeStates == 1:
+		if PWM_select == 0:
+			if rotary_result == 1:
+				PWM_0 += PWM_0_speed
+				PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+			elif rotary_result == -1:
+				PWM_0 -= PWM_0_speed
+				PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+		elif PWM_select == 1:
+			if rotary_result == 1:
+				PWM_1 += PWM_1_speed
+				PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+			elif rotary_result == -1:
+				PWM_1 -= PWM_1_speed
+				PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+		elif PWM_select == 2:
+			if rotary_result == 1:
+				PWM_2 += PWM_2_speed
+				PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+			elif rotary_result == -1:
+				PWM_2 -= PWM_2_speed
+				PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+		elif PWM_select == 3:
+			if rotary_result == 1:
+				PWM_3 += PWM_3_speed
+				PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+			elif rotary_result == -1:
+				PWM_3 -= PWM_3_speed
+				PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+	elif modeStates == 2:
+		if rotary_result == 1:
+			PWM_3 += PWM_3_speed
+			PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+		elif rotary_result == -1:
+			PWM_3 -= PWM_3_speed
+			PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+
+
+	elif modeStates == 3:
+		if PWM_set == 1:
+			if PWM_select == 0:
+				if rotary_result == 1:
+					PWM_0 += PWM_0_speed
+					PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+				elif rotary_result == -1:
+					PWM_0 -= PWM_0_speed
+					PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+			elif PWM_select == 1:
+				if rotary_result == 1:
+					PWM_1 += PWM_1_speed
+					PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+				elif rotary_result == -1:
+					PWM_1 -= PWM_1_speed
+					PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+			elif PWM_select == 2:
+				if rotary_result == 1:
+					PWM_2 += PWM_2_speed
+					PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+				elif rotary_result == -1:
+					PWM_2 -= PWM_2_speed
+					PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+			elif PWM_select == 3:
+				if rotary_result == 1:
+					PWM_3 += PWM_3_speed
+					PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+				elif rotary_result == -1:
+					PWM_3 -= PWM_3_speed
+					PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+		elif PWM_set == 2:
+			if rotary_result == 1:
+				mission_deley_time += 0.05
+			elif rotary_result == -1:
+				if mission_deley_time <= 0.05:
+					mission_deley_time = 0
+				else:
+					mission_deley_time -= 0.05
+
+
+	elif modeStates == 4:
+		if PWM_set == 1:
+			if PWM_select == 0:
+				if rotary_result == 1:
+					PWM_0 += PWM_0_speed
+					PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+				elif rotary_result == -1:
+					PWM_0 -= PWM_0_speed
+					PWM_0 = ctrl_range(PWM_0, PWM_0_MAX, PWM_0_MIN)
+			elif PWM_select == 1:
+				if rotary_result == 1:
+					PWM_1 += PWM_1_speed
+					PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+				elif rotary_result == -1:
+					PWM_1 -= PWM_1_speed
+					PWM_1 = ctrl_range(PWM_1, PWM_1_MAX, PWM_1_MIN)
+			elif PWM_select == 2:
+				if rotary_result == 1:
+					PWM_2 += PWM_2_speed
+					PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+				elif rotary_result == -1:
+					PWM_2 -= PWM_2_speed
+					PWM_2 = ctrl_range(PWM_2, PWM_2_MAX, PWM_2_MIN)
+			elif PWM_select == 3:
+				if rotary_result == 1:
+					PWM_3 += PWM_3_speed
+					PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+				elif rotary_result == -1:
+					PWM_3 -= PWM_3_speed
+					PWM_3 = ctrl_range(PWM_3, PWM_3_MAX, PWM_3_MIN)
+		elif PWM_set == 2:
+			#time_input
+			if rotary_result == 1:
+				time_set += 1
+			elif rotary_result == -1:
+				if time_set <= 2:
+					time_set = 1
+				else:
+					time_set -= 1
+			pass
+		elif PWM_set == 3:
+			#frame_input
+			if rotary_result == 1:
+				frame_set += 1
+			elif rotary_result == -1:
+				if frame_set <= 2:
+					frame_set = 1
+				else:
+					frame_set -= 1
+			pass
+		elif PWM_set == 4:
+			#_input
+			pass
+	elif modeStates == 5:
+		#Nothing
+		pass
+	elif modeStates == 0:
+		if rotary_result == 1:
+			setting_select += 1
+		elif rotary_result == -1:
+			setting_select -= 1
+		if setting_select == 6:
+			setting_select = 1
+		if setting_select == 0:
+			setting_select = 5
+		print(setting_select)
+		time.sleep(0.2)
+	rotary_result = 0
+
+
+def keys_and_steps():
+	global PWM_set, DIR_step_0, DIR_step_1, DIR_step_2, DIR_step_3
+	DIR_step_0 = []
+	DIR_step_1 = []
+	DIR_step_2 = []
+	DIR_step_3 = []
+	PWM_set = 1
+
+	def leg_base_move(port, goal_step, last_step, re_pos, to_pos):
+		pwm_now_input = int(last_step+(goal_step-last_step)*re_pos/to_pos)
+		pwm.set_pwm(port, 0, pwm_now_input)
+		return pwm_now_input
+
+	def dove_servo(input_0, input_1, input_2, input_3):
+		global PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD, mission_pwm0, mission_pwm1, mission_pwm2, mission_pwm3
+		range_input = max(abs(input_0-PWM_0_OLD), abs(input_1-PWM_1_OLD), abs(input_2-PWM_2_OLD), abs(input_3-PWM_3_OLD))+1
+		for i in range(1, range_input, auto_speed):
+			rotary_input_change()
+			button_input_change(btn_input)
+			if modeStates == 3:
+				mission_pwm0 = leg_base_move(0, input_0, PWM_0_OLD, i, range_input)
+				mission_pwm1 = leg_base_move(1, input_1, PWM_1_OLD, i, range_input)
+				mission_pwm2 = leg_base_move(2, input_2, PWM_2_OLD, i, range_input)
+				mission_pwm3 = leg_base_move(3, input_3, PWM_3_OLD, i, range_input)
+				if btn_input == 0:
+					LCD_change()
+				time.sleep(mission_deley_time)
+			else:
+				PWM_0_OLD = mission_pwm0
+				PWM_1_OLD = mission_pwm1
+				PWM_2_OLD = mission_pwm2
+				PWM_3_OLD = mission_pwm3
+				break
+		PWM_0_OLD = mission_pwm0
+		PWM_1_OLD = mission_pwm1
+		PWM_2_OLD = mission_pwm2
+		PWM_3_OLD = mission_pwm3
+
+
+	def kas_command_input():
+		for i in range(0,len(DIR_step_0)):
+			if modeStates == 3:
+				dove_servo(DIR_step_0[i],DIR_step_1[i],DIR_step_2[i],DIR_step_3[i])
+				print('>>>>>>%d<<<<<<'%i)
+			else:
+				break
+		dove_servo(DIR_step_0[0],DIR_step_1[0],DIR_step_2[0],DIR_step_3[0])
+
+	while PWM_set == 1:
+		rotary_input_change()
+		button_input_change(btn_input)
+		rotary_encoder_Mode()
+		LCD_change()
+	while PWM_set == 2:
+		kas_command_input()
 		pass
 
 
-def jt():
-	global lcd_new_line1, butSwitch, pwm0_mpu, pwm1_mpu, pwm2_mpu, pwm3_mpu, last_step_0, last_step_1, last_step_2, last_step_3, command_input_stu, TL_setting
-	if ModeSwitch == 1:
-		lcd_new_line1  = '<Rotary Encoder>'
-	elif ModeSwitch == 2:
-		butSwitch = 1
-		pwm0_mpu = pwm0
-		pwm1_mpu = pwm1
-		pwm2_mpu = pwm2
-		pwm3_mpu = pwm3
-		lcd_new_line1  = '<Movement Input>'
-	elif ModeSwitch == 3:
-		last_step_0 = pwm0
-		last_step_1 = pwm1
-		last_step_2 = pwm2
-		last_step_3 = pwm3
-		command_input_stu  = 1
-		lcd_new_line1  = '<Keys and Setps>'
-	elif ModeSwitch == 4:
-		TL_setting = 1
-		lcd_new_line1  = '<TimeLapse Mode>'
-	elif ModeSwitch == 5:
-		lcd_new_line1  = '---<Settings>---'
+def time_lapse():
+	global PWM_set, DIR_step_0, DIR_step_1, DIR_step_2, DIR_step_3
+	DIR_step_0 = []
+	DIR_step_1 = []
+	DIR_step_2 = []
+	DIR_step_3 = []
+	PWM_set = 1
+
+	def leg_base_move(port, goal_step, last_step, re_pos, to_pos):
+		pwm_now_input = int(last_step+(goal_step-last_step)*re_pos/to_pos)
+		pwm.set_pwm(port, 0, pwm_now_input)
+		return pwm_now_input
+
+	def doveTL_servo(input_0, input_1, input_2, input_3):
+		global PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD, mission_pwm0, mission_pwm1, mission_pwm2, mission_pwm3
+		range_input = max(abs(input_0-PWM_0_OLD), abs(input_1-PWM_1_OLD), abs(input_2-PWM_2_OLD), abs(input_3-PWM_3_OLD))+1
+		for i in range(1, range_input, auto_speed):
+			rotary_input_change()
+			button_input_change(btn_input)
+			if modeStates == 4:
+				mission_pwm0 = leg_base_move(0, input_0, PWM_0_OLD, i, range_input)
+				mission_pwm1 = leg_base_move(1, input_1, PWM_1_OLD, i, range_input)
+				mission_pwm2 = leg_base_move(2, input_2, PWM_2_OLD, i, range_input)
+				mission_pwm3 = leg_base_move(3, input_3, PWM_3_OLD, i, range_input)
+				if btn_input == 0:
+					LCD_change()
+				time.sleep(mission_deley_time)
+			else:
+				PWM_0_OLD = mission_pwm0
+				PWM_1_OLD = mission_pwm1
+				PWM_2_OLD = mission_pwm2
+				PWM_3_OLD = mission_pwm3
+				break
+		PWM_0_OLD = mission_pwm0
+		PWM_1_OLD = mission_pwm1
+		PWM_2_OLD = mission_pwm2
+		PWM_3_OLD = mission_pwm3
+
+	def timeLapse(input_0, input_1, input_2, input_3, total_time, pix):
+		global PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD, mission_pwm0, mission_pwm1, mission_pwm2, mission_pwm3
+		range_input = max(abs(input_0-PWM_0_OLD), abs(input_1-PWM_1_OLD), abs(input_2-PWM_2_OLD), abs(input_3-PWM_3_OLD))+1
+		for i in range(1, pix+1):
+			rotary_input_change()
+			button_input_change(btn_input)
+			if modeStates == 4:
+				mission_pwm0 = leg_base_move(0, input_0, PWM_0_OLD, i, pix+1)
+				mission_pwm1 = leg_base_move(1, input_1, PWM_1_OLD, i, pix+1)
+				mission_pwm2 = leg_base_move(2, input_2, PWM_2_OLD, i, pix+1)
+				mission_pwm3 = leg_base_move(3, input_3, PWM_3_OLD, i, pix+1)
+				if btn_input == 0:
+					LCD_change()
+				time.sleep(round((total_time/pix),2))
+			else:
+				PWM_0_OLD = mission_pwm0
+				PWM_1_OLD = mission_pwm1
+				PWM_2_OLD = mission_pwm2
+				PWM_3_OLD = mission_pwm3
+				break
+		PWM_0_OLD = mission_pwm0
+		PWM_1_OLD = mission_pwm1
+		PWM_2_OLD = mission_pwm2
+		PWM_3_OLD = mission_pwm3
+
+	def tla_command_input():
+		global PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD
+		PWM_0_OLD = DIR_step_0[0]
+		PWM_1_OLD = DIR_step_1[0]
+		PWM_2_OLD = DIR_step_2[0]
+		PWM_3_OLD = DIR_step_3[0]
+		for i in range(0,len(DIR_step_0)):
+			if modeStates == 4:
+				if i == 0:
+					timeLapse(DIR_step_0[i], DIR_step_1[i], DIR_step_2[i], DIR_step_3[i],3, 3)
+				else:
+					timeLapse(DIR_step_0[i], DIR_step_1[i], DIR_step_2[i], DIR_step_3[i], timelapse_time[i-1], timelapse_frames[i-1])
+			else:
+				break
+		if modeStates == 4:
+			doveTL_servo(DIR_step_0[0],DIR_step_1[0],DIR_step_2[0],DIR_step_3[0])
+
+	while modeStates ==4:
+		while PWM_set == 1:
+			rotary_input_change()
+			button_input_change(btn_input)
+			rotary_encoder_Mode()
+			LCD_change()
+			pass
+		while PWM_set == 2:  #Time Input
+			rotary_input_change()
+			button_input_change(btn_input)
+			LCD_change()
+			time.sleep(0.1)
+			pass
+		while PWM_set == 3:  #Frame Input
+			rotary_input_change()
+			button_input_change(btn_input)
+			LCD_change()
+			time.sleep(0.1)
+			pass
+		while PWM_set == 4 and modeStates == 4:  #Run
+			tla_command_input()
+			LCD_change()
+			pass
 
 
-def led_on_off(time_set, color):
-	led_stu = 0
-	for i in range(0,int(time_set*5)):
-		if led_stu == 0:
-			led.colorWipe(color)
-			led_stu = 1
-		else:
-			led.colorWipe(Color(0,0,0))
-			led_stu = 0
+
+class Output_ctrl(threading.Thread):
+	def __init__(self, *args, **kwargs):
+		super(Output_ctrl, self).__init__(*args, **kwargs)
+		self.__flag = threading.Event()
+		self.__flag.set()
+		self.__running = threading.Event()
+		self.__running.set()
+
+	def run(self):
+		global btn_input, PWM_select
+		while self.__running.isSet():
+			self.__flag.wait()
+			button_input_change(btn_input)
+			rotary_input_change()
+			LCD_change()
+
+			if modeStates == 1:
+				rotary_encoder_Mode()
+			elif modeStates == 2:
+				PWM_select = 1
+				while modeStates == 2:
+					rotary_input_change()
+					button_input_change(btn_input)
+					LCD_change()
+					movement_Mode()
+				LCD_change()
+			elif modeStates == 3:
+				keys_and_steps()
+				LCD_change()
+			elif modeStates == 4:
+				time_lapse()
+
+			if btn_input == 1:
+				print('>>>1<<<')
+			elif btn_input == 2:
+				print('>>>2<<<')
+			elif btn_input == 3:
+				print('>>>3<<<')
+			btn_input = 0
+
+			#print('PWM_select:%d'%PWM_select)
+			#print('MOD_select:%d'%modeStates)
+			output_move.pause()
+
+
+	def pause(self):
+		self.__flag.clear()
+
+	def resume(self):
+		self.__flag.set()
+
+	def stop(self):
+		self.__flag.set()
+		self.__running.clear()
+
+
+LCD_screen = LCD_ctrl()
+LCD_screen.start()
+LCD_screen.pause()
+
+output_move = Output_ctrl()
+output_move.start()
+output_move.pause()
+
+clkLastState = GPIO.input(clk)
+def rotary_input(delay_time):
+	global clkLastState, old_number, number
+	if GPIO.wait_for_edge(clk, GPIO.FALLING):
+		clkState = GPIO.input(clk)
+		dtState = GPIO.input(dt)
+		btnState = GPIO.input(btn)
+		if clkState != clkLastState:
+			if dtState != clkState:
+				number -= 1
+				return -1
+			else:
+				number += 1
+				return 1
+		clkLastState = clkState
+		if number != old_number:
+			old_number = number
+			time.sleep(delay_time)
+
+
+#>>> Threading for Button <<<
+def button_Thread():
+	global btn_input
+	while 1:
+		while not GPIO.input(btn):
+			btn_press_time = 0
+			btn_press = 1
+			led.colorWipe(Color(77, 0, 0))
+			while not GPIO.input(btn):
+				btn_press_time += 1
+				if btn_press_time > 5:
+					btn_press = 2
+					led.colorWipe(Color(77, 77, 0))
+					while not GPIO.input(btn):
+						btn_press_time += 1
+						if btn_press_time > 15:
+							btn_press = 3
+							led.colorWipe(Color(0, 77, 77))
+							while not GPIO.input(btn):
+								time.sleep(0.2)
+								pass
+						time.sleep(0.2)
+						pass
+				time.sleep(0.2)
+				pass
+			led.colorWipe(Color(0, 0, 0))
+			btn_input = btn_press
+			output_move.resume()
+			time.sleep(0.2)
 		time.sleep(0.2)
 
 
-def start_up():
-	global lcd_new_line1, lcd_new_line2
-	print('-<BE CAREFUL!!>-')
-	lcd_new_line1 = '-<BE CAREFUL!!>-'
-	lcd_new_line2 = 'Port0 acts in 3s'
-	print('Port0 acts in 3s')
-	led_on_off(2, Color(77, 7, 0))
-	lcd_new_line2 = 'Port0 acts in 2s'
-	print('Port0 acts in 2s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port0 acts in 1s'
-	print('Port0 acts in 1s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port0 acting now'
-	print('Port0 acting now')
-	led_on_off(0.5, Color(77, 7, 0))
-	pwm.set_pwm(0, 0, 300)
 
-	lcd_new_line2 = 'Port1 acts in 3s'
-	print('Port1 acts in 3s')
-	led_on_off(2, Color(77, 7, 0))
-	lcd_new_line2 = 'Port1 acts in 2s'
-	print('Port1 acts in 2s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port1 acts in 1s'
-	print('Port1 acts in 1s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port1 acting now'
-	print('Port1 acting now')
-	led_on_off(0.5, Color(77, 7, 0))
-	pwm.set_pwm(1, 0, 300)
-
-	lcd_new_line2 = 'Port2 acts in 3s'
-	print('Port2 acts in 3s')
-	led_on_off(2, Color(77, 7, 0))
-	lcd_new_line2 = 'Port2 acts in 2s'
-	print('Port2 acts in 2s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port2 acts in 1s'
-	print('Port2 acts in 1s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port2 acting now'
-	print('Port2 acting now')
-	led_on_off(0.5, Color(77, 7, 0))
-	pwm.set_pwm(2, 0, 300)
-
-	lcd_new_line2 = 'Port3 acts in 3s'
-	print('Port3 acts in 3s')
-	led_on_off(2, Color(77, 7, 0))
-	lcd_new_line2 = 'Port3 acts in 2s'
-	print('Port3 acts in 2s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port3 acts in 1s'
-	print('Port3 acts in 1s')
-	led_on_off(1, Color(77, 7, 0))
-	lcd_new_line2 = 'Port3 acting now'
-	print('Port3 acting now')
-	led_on_off(0.5, Color(77, 7, 0))
-	pwm.set_pwm(3, 0, 300)
-
-#<Keys and Setps> & <TimeLapse Mode>
-command_input_stu  = 0
-command_output_stu = 0
-
-#to_pos_input= 100
-
-deley_time = 0
-
-servo_step_0 = []
-servo_step_1 = []
-servo_step_2 = []
-servo_step_3 = []
-
-timelapse_time   = []
-timelapse_frames = []
+btn_threading=threading.Thread(target=button_Thread) #Define a thread for LCD
+btn_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
+btn_threading.start()									 #Thread starts
 
 
-def leg_base_move(port, goal_step, last_step, re_pos, to_pos):
-	pwm.set_pwm(port, 0, int(last_step+(goal_step-last_step)*re_pos/to_pos))
-	'''
-	if last_step < goal_step:
-		pwm.set_pwm(port, 0, int(last_step+(goal_step-last_step)*re_pos/to_pos))
-	else:
-		pwm.set_pwm(port, 0, int(last_step-(last_step-goal_step)*re_pos/to_pos))
-	'''
-
-
-def dove_move(input_0, input_1, input_2, input_3):
-	global old_pwm0, old_pwm1, old_pwm2, old_pwm3, pwm0, pwm1, pwm2, pwm3
-	range_input = max(abs(input_0-old_pwm0), abs(input_1-old_pwm1), abs(input_2-old_pwm2), abs(input_3-old_pwm3))+1
-	for i in range(1, range_input):
-		if command_output_stu:
-			leg_base_move(0, input_0, old_pwm0, i, range_input)
-			leg_base_move(1, input_1, old_pwm1, i, range_input)
-			leg_base_move(2, input_2, old_pwm2, i, range_input)
-			leg_base_move(3, input_3, old_pwm3, i, range_input)
-			time.sleep(deley_time)
-		else:
-			pwm0 = int(old_pwm0+(input_0-old_pwm0)*i/range_input)
-			pwm1 = int(old_pwm1+(input_1-old_pwm1)*i/range_input)
-			pwm2 = int(old_pwm2+(input_2-old_pwm2)*i/range_input)
-			pwm3 = int(old_pwm3+(input_3-old_pwm3)*i/range_input)
-			break
-
-	old_pwm0 = input_0
-	old_pwm1 = input_1
-	old_pwm2 = input_2
-	old_pwm3 = input_3
-
-
-def command_input():
-	global pwm0, pwm1, pwm2, pwm3, butSwitch, lcd_new_line2, command_input_stu, command_output_stu
-	if command_input_stu:
-		buttonPress = button(3)
-		if buttonPress == 0:
-			butSwitch += 1
-			if butSwitch > 3:
-				butSwitch = 0
-		elif buttonPress == 1:
-			servo_step_0.append(pwm0)
-			servo_step_1.append(pwm1)
-			servo_step_2.append(pwm2)
-			servo_step_3.append(pwm3)
-			print(servo_step_0)
-			print(servo_step_1)
-			print(servo_step_2)
-			print(servo_step_3)
-		elif buttonPress == 2:
-			command_input_stu  = 0
-			command_output_stu = 1
-			return 0
-
-		if butSwitch == 0:
-			pwm0 += rotary(port_0_speed)
-			pwm0 = ctrl_range(pwm0, pwm0_max, pwm0_min)
-			lcd_new_line2  = 'Port:0 PWM:%d'%pwm0
-		elif butSwitch == 1:
-			pwm1 += rotary(port_1_speed)
-			pwm1 = ctrl_range(pwm1, pwm1_max, pwm1_min)
-			lcd_new_line2  = 'Port:1 PWM:%d'%pwm1
-		elif butSwitch == 2:
-			pwm2 += rotary(port_2_speed)
-			lcd_new_line2  = 'Port:2 PWM:%d'%pwm2
-			pwm2 = ctrl_range(pwm2, pwm2_max, pwm2_min)
-		elif butSwitch == 3:
-			pwm3 += rotary(port_3_speed)
-			lcd_new_line2  = 'Port:3 PWM:%d'%pwm3
-			pwm3 = ctrl_range(pwm3, pwm3_max, pwm3_min)
-
-		time.sleep(0.001)
-
-
-def command_output():
-	global command_output_stu, command_input_stu
-	if command_output_stu:
-		buttonPress = button(3)
-		if buttonPress == 0:
-			pass
-		elif buttonPress == 1:
-			command_input_stu  = 1
-			command_output_stu = 0
-			return 1
-		elif buttonPress == 2:
-			command_input_stu  = 1
-			command_output_stu = 0
-			return 1
-
-
-###########<Time_Lapse>###########
-TL_setting = 0
-TL_start = 0
-
-TL_step_0 = []
-TL_step_1 = []
-TL_step_2 = []
-TL_step_3 = []
-
-timelapse_time   = []
-timelapse_frames = []
-
-def button_TL():
-	'''
-	Short Press return 0
-	Long Press I return 1
-	Long Press II return 2
-	'''
-	global butSwitch, LED_set, command_input_stu, command_output_stu, TL_start
-	butLast = 0
-	shortPress_stu   = 0
-	longPress_I_stu  = 0
-	longPress_II_stu = 0
-	while not GPIO.input(btn):
-		LED_thread = 0
-		led.set_color(Color(77, 0, 0), 4)
-		led.set_color(Color(77, 0, 0), 5)
-		butLast += 1
-		shortPress_stu = 1
-		TL_start = 0
-		if butLast > longPress_I:
-			TL_start = 0
-			shortPress_stu  = 0
-			longPress_I_stu = 1
-			butLast = 0
-			led_change = longPress_II
-			while not GPIO.input(btn):
-				led.colorWipe(Color(0, 0, led_change))
-				led_change -= 1
-				if led_change == 0:
-					longPress_I_stu  = 0
-					longPress_II_stu = 1
-					led.colorWipe(Color(0, longPress_II, longPress_II))
-					while not GPIO.input(btn):
-						pass
-		time.sleep(0.05)
-
-	if shortPress_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		return 0
-	elif longPress_I_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		return 1
-	elif longPress_II_stu:
-		led.colorWipe(Color(0, 0, 0))
-		LED_set = 1
-		return 2
-
-
-def position_input():
-	global lcd_new_line2, pwm0, pwm1, pwm2, pwm3, butSwitch, TL_setting, TL_start
-	lcd_new_line2 = 'Pos Input:1'
-	while 1:
-		buttonPress = button_TL()
-		if buttonPress == 0:
-			butSwitch += 1
-			if butSwitch > 3:
-				butSwitch = 0
-		elif buttonPress == 1:
-			TL_step_0.append(pwm0)
-			TL_step_1.append(pwm1)
-			TL_step_2.append(pwm2)
-			TL_step_3.append(pwm3)
-			lcd_new_line2 = 'Pos Setted:%d'%len(TL_step_0)
-			break
-		elif buttonPress == 2:
-			TL_step_0.append(pwm0)
-			TL_step_1.append(pwm1)
-			TL_step_2.append(pwm2)
-			TL_step_3.append(pwm3)
-			lcd_new_line2 = 'Pos Setted:%d'%len(TL_step_0)
-			TL_setting = 0
-			TL_start = 1
-			break
-
-		if butSwitch == 0:
-			pwm0 += rotary(port_0_speed)
-			pwm0 = ctrl_range(pwm0, pwm0_max, pwm0_min)
-			lcd_new_line2  = 'Pos:%d Por0 %d'%(len(TL_step_0),pwm0)
-		elif butSwitch == 1:
-			pwm1 += rotary(port_1_speed)
-			pwm1 = ctrl_range(pwm1, pwm1_max, pwm1_min)
-			lcd_new_line2  = 'Pos:%d Por1 %d'%(len(TL_step_0),pwm1)
-		elif butSwitch == 2:
-			pwm2 += rotary(port_2_speed)
-			lcd_new_line2  = 'Pos:%d Por2 %d'%(len(TL_step_0),pwm2)
-			pwm2 = ctrl_range(pwm2, pwm2_max, pwm2_min)
-		elif butSwitch == 3:
-			pwm3 += rotary(port_3_speed)
-			lcd_new_line2  = 'Pos:%d Por3 %d'%(len(TL_step_0),pwm3)
-			pwm3 = ctrl_range(pwm3, pwm3_max, pwm3_min)
-
-		time.sleep(0.001)
-		pass
-
-
-def time_input():
-	global lcd_new_line2
-	time_to_set = 0
-	while 1:
-		buttonPress = button_TL()
-		if buttonPress == 0:
-			timelapse_time.append(time_to_set)
-			break
-		elif buttonPress == 1:
-			timelapse_time.append(time_to_set)
-			break
-		elif buttonPress == 2:
-			timelapse_time.append(time_to_set)
-			break
-
-		time_to_set += rotary(1)
-		if time_to_set < 0:
-			time_to_set = 0
-		lcd_new_line2 = '%ds Time Set'%time_to_set
-		print('%ds Time Set'%time_to_set)
-		time.sleep(0.005)
-		pass
-
-
-def frame_input():
-	global lcd_new_line2
-	frames_to_set = 0
-	while 1:
-		buttonPress = button_TL()
-		if buttonPress == 0:
-			timelapse_frames.append(frames_to_set)
-			break
-		elif buttonPress == 1:
-			timelapse_frames.append(frames_to_set)
-			break
-		elif buttonPress == 2:
-			timelapse_frames.append(frames_to_set)
-			break
-
-		frames_to_set += rotary(1)
-		if frames_to_set < 0:
-			frames_to_set = 0
-		lcd_new_line2 = '%ds Frames Set'%frames_to_set
-		time.sleep(0.005)
-		pass
-
-
-def break_TL():
-	global TL_start
-	buttonPress = button_TL()
-	print(TL_start)
-	if buttonPress == 0:
-		return 1
-	elif buttonPress == 1:
-		TL_start = 0
-		switch(4)
-		return 1
-	elif buttonPress == 2:
-		TL_start = 0
-		switch(4)
-		return 1
-
-	if TL_start == 0:
-		switch(4)
-
-
-def timelapse(input_0, input_1, input_2, input_3, total_time, pix):
-	global old_pwm0, old_pwm1, old_pwm2, old_pwm3
-	for i in range(1, pix+1):
-		leg_base_move(0, input_0, old_pwm0, i, pix+1)
-		leg_base_move(1, input_1, old_pwm1, i, pix+1)
-		leg_base_move(2, input_2, old_pwm2, i, pix+1)
-		leg_base_move(3, input_3, old_pwm3, i, pix+1)
-		try:
-			time.sleep(total_time/pix)
-		except:
-			pass
-	old_pwm0 = input_0
-	old_pwm1 = input_1
-	old_pwm2 = input_2
-	old_pwm3 = input_3
-
-##################################
-
-led=LED()
-
-show_threading=threading.Thread(target=lcdled_threading) #Define a thread for LCD
-show_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-show_threading.start()									 #Thread starts
-
-base_move_threading=threading.Thread(target=base_move_thread) #Define a thread for LCD
-base_move_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-base_move_threading.start()									 #Thread starts
-
-def remote():
-	global pwm0, pwm1, pwm2, pwm3, remote_speed
-	print('xxx')
+def server_setup():
+	global PWM_0, PWM_1, PWM_2, PWM_3, socket_speed, PWM_0_OLD, PWM_1_OLD, PWM_2_OLD, PWM_3_OLD
 	HOST = ''
 	PORT = 10223							  #Define port serial 
 	BUFSIZ = 1024							 #Define buffer size
 	ADDR = (HOST, PORT)
 
-	'''
+	def ap_thread():
+		os.system("sudo create_ap wlan0 eth0 AdeeptCar 12345678")
+
+
+	def get_cpu_tempfunc():
+		""" Return CPU temperature """
+		result = 0
+		mypath = "/sys/class/thermal/thermal_zone0/temp"
+		with open(mypath, 'r') as mytmpfile:
+			for line in mytmpfile:
+				result = line
+
+		result = float(result)/1000
+		result = round(result, 1)
+		return str(result)
+
+
+	def get_gpu_tempfunc():
+		""" Return GPU temperature as a character string"""
+		res = os.popen('/opt/vc/bin/vcgencmd measure_temp').readline()
+		return res.replace("temp=", "")
+
+
+	def get_cpu_use():
+		""" Return CPU usage using psutil"""
+		cpu_cent = psutil.cpu_percent()
+		return str(cpu_cent)
+
+
+	def get_ram_info():
+		""" Return RAM usage using psutil """
+		ram_cent = psutil.virtual_memory()[2]
+		return str(ram_cent)
+
+
+	def get_swap_info():
+		""" Return swap memory  usage using psutil """
+		swap_cent = psutil.swap_memory()[3]
+		return str(swap_cent)
+
+
+	def info_get():
+		global cpu_t,cpu_u,gpu_t,ram_info
+		while 1:
+			cpu_t = get_cpu_tempfunc()
+			cpu_u = get_cpu_use()
+			ram_info = get_ram_info()
+			time.sleep(3)
+
 	try:
 		s =socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 		s.connect(("1.1.1.1",80))
@@ -952,20 +968,6 @@ def remote():
 		ap_threading.setDaemon(True)						  #'True' means it is a front thread,it would close when the mainloop() closes
 		ap_threading.start()								  #Thread starts
 
-		LED.colorWipe(Color(0,16,50))
-		time.sleep(1)
-		LED.colorWipe(Color(0,16,100))
-		time.sleep(1)
-		LED.colorWipe(Color(0,16,150))
-		time.sleep(1)
-		LED.colorWipe(Color(0,16,200))
-		time.sleep(1)
-		LED.colorWipe(Color(0,16,255))
-		time.sleep(1)
-		LED.colorWipe(Color(35,255,35))
-	'''
-
-	#try:
 	tcpSerSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	tcpSerSock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 	tcpSerSock.bind(ADDR)
@@ -973,77 +975,101 @@ def remote():
 	print('waiting for connection...')
 	tcpCliSock, addr = tcpSerSock.accept()
 	print('...connected from :', addr)
+	switch.switchSetup()
 
-	while 1:
+	def info_send_client():
+		SERVER_IP = addr[0]
+		SERVER_PORT = 2256   #Define port serial 
+		SERVER_ADDR = (SERVER_IP, SERVER_PORT)
+		Info_Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #Set connection value for socket
+		Info_Socket.connect(SERVER_ADDR)
+		print(SERVER_ADDR)
+		while 1:
+			Info_Socket.send((get_cpu_tempfunc()+' '+get_cpu_use()+' '+get_ram_info()).encode())
+			time.sleep(1)
+
+	info_threading=threading.Thread(target=info_send_client)	#Define a thread for FPV and OpenCV
+	info_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
+	info_threading.start()									 #Thread starts
+	while True: 
 		data = ''
 		data = str(tcpCliSock.recv(BUFSIZ).decode())
 		if not data:
 			continue
-		elif '0+' in data:
-			pwm0 += remote_speed
-		elif '0-' in data:
-			pwm0 -= remote_speed
-		elif '1+' in data:
-			pwm1 += remote_speed
-		elif '1-' in data:
-			pwm1 -= remote_speed
-		elif '2+' in data:
-			pwm2 += remote_speed
-		elif '2-' in data:
-			pwm2 -= remote_speed
-		elif '3+' in data:
-			pwm3 += remote_speed
-		elif '3-' in data:
-			pwm3 -= remote_speed
-	#except:
-		#pass
+		elif '0+' == data:
+			PWM_select = 0
+			PWM_0 += socket_speed
+			pwm.set_pwm(0,0,PWM_0)
+			PWM_0_OLD = PWM_0
+		elif '0-' == data:
+			PWM_select = 0
+			PWM_0 -= socket_speed
+			pwm.set_pwm(0,0,PWM_0)
+			PWM_0_OLD = PWM_0
+		elif '1+' == data:
+			PWM_select = 1
+			PWM_1 += socket_speed
+			pwm.set_pwm(1,0,PWM_1)
+			PWM_1_OLD = PWM_1
+		elif '1-' == data:
+			PWM_select = 1
+			PWM_1 -= socket_speed
+			pwm.set_pwm(1,0,PWM_1)
+			PWM_1_OLD = PWM_1
+		elif '2+' == data:
+			PWM_select = 2
+			PWM_2 += socket_speed
+			pwm.set_pwm(2,0,PWM_2)
+			PWM_2_OLD = PWM_2
+		elif '2-' == data:
+			PWM_select = 2
+			PWM_2 -= socket_speed
+			pwm.set_pwm(2,0,PWM_2)
+			PWM_2_OLD = PWM_2
+		elif '3+' == data:
+			PWM_select = 3
+			PWM_3 += socket_speed
+			pwm.set_pwm(3,0,PWM_3)
+			PWM_3_OLD = PWM_3
+		elif '3-' == data:
+			PWM_select = 3
+			PWM_3 -= socket_speed
+			pwm.set_pwm(3,0,PWM_3)
+			PWM_3_OLD = PWM_3
+		elif 'Switch_1_on' == data:
+			switch.switch(1,1)
+		elif 'Switch_2_on' == data:
+			switch.switch(2,1)
+		elif 'Switch_3_on' == data:
+			switch.switch(3,1)
+
+		elif 'Switch_1_off' == data:
+			switch.switch(1,0)
+		elif 'Switch_2_off' == data:
+			switch.switch(2,0)
+		elif 'Switch_3_off' == data:
+			switch.switch(3,0)
+
+		elif 'wsB' in data:
+			try:
+				set_B=data.split()
+				socket_speed = int(set_B[1])
+			except:
+				pass
+		LCD_change()
+		print(data)
 
 
-remote_threading=threading.Thread(target=remote) #Define a thread for LCD
-remote_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-remote_threading.start()									 #Thread starts
+socket_threading=threading.Thread(target=server_setup) #Define a thread for LCD
+socket_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
+socket_threading.start()									 #Thread starts
 
-#try:
-	#start_up()
-switch(1)
 
+#>>> Main_loop Rotary  <<<
 while 1:
-	jt()
-	while ModeSwitch == 1:
-		if rotary_mode():
-			break
-	jt()
-	while ModeSwitch == 2:
-		if movement_mode():
-			break
-	jt()
-	while ModeSwitch == 3:
-		command_input()
-		if command_output():
-			break
-	jt()
-	while ModeSwitch == 4:
-		while TL_setting:
-			position_input()
-			if TL_setting:
-				time_input()
-				frame_input()
-			else:
-				print('Setted')
-				break
-			print(TL_step_0)
-			print(TL_step_1)
-			print(TL_step_2)
-			print(TL_step_3)
-			print(timelapse_time)
-			print(timelapse_frames)
-			pass
-		time.sleep(2)
-		if break_TL():
-			break
-		pass
-#except:
-	#pwm = Adafruit_PCA9685.PCA9685()
-	#pwm.set_pwm_freq(50)
-	#led.colorWipe(Color(0,0,0))
-
+	rotary_result = rotary_input(0.015)
+	if rotary_result == 1:
+		output_move.resume()
+	elif rotary_result == -1:
+		output_move.resume()
+	pass
