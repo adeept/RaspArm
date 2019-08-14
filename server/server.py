@@ -124,9 +124,6 @@ mission_deley_time = 0
 socket_speed = 1
 
 
-
-
-
 class LED:
 	'''
 	Example Code for Using LED.
@@ -165,6 +162,96 @@ class LED:
 		self.strip.setPixelColor(num, color)
 		self.strip.show()
 led = LED()
+
+
+def led_on_off(time_set, color):
+	led_stu = 0
+	for i in range(0,int(time_set*5)):
+		if led_stu == 0:
+			led.colorWipe(color)
+			led_stu = 1
+		else:
+			led.colorWipe(Color(0,0,0))
+			led_stu = 0
+		time.sleep(0.2)
+
+def start_up():
+	global lcd_new_line1, lcd_new_line2
+	print('-<BE CAREFUL!!>-')
+	lcd_new_line1 = '-<BE CAREFUL!!>-'
+	lcd_new_line2 = 'Port0 acts in 3s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port0 acts in 3s')
+	led_on_off(2, Color(77, 7, 0))
+	lcd_new_line2 = 'Port0 acts in 2s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port0 acts in 2s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port0 acts in 1s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port0 acts in 1s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port0 acting now'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port0 acting now')
+	led_on_off(0.5, Color(77, 7, 0))
+	pwm.set_pwm(0, 0, 300)
+
+	lcd_new_line2 = 'Port1 acts in 3s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port1 acts in 3s')
+	led_on_off(2, Color(77, 7, 0))
+	lcd_new_line2 = 'Port1 acts in 2s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port1 acts in 2s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port1 acts in 1s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port1 acts in 1s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port1 acting now'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port1 acting now')
+	led_on_off(0.5, Color(77, 7, 0))
+	pwm.set_pwm(1, 0, 300)
+
+	lcd_new_line2 = 'Port2 acts in 3s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port2 acts in 3s')
+	led_on_off(2, Color(77, 7, 0))
+	lcd_new_line2 = 'Port2 acts in 2s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port2 acts in 2s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port2 acts in 1s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port2 acts in 1s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port2 acting now'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port2 acting now')
+	led_on_off(0.5, Color(77, 7, 0))
+	pwm.set_pwm(2, 0, 300)
+
+	lcd_new_line2 = 'Port3 acts in 3s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port3 acts in 3s')
+	led_on_off(2, Color(77, 7, 0))
+	lcd_new_line2 = 'Port3 acts in 2s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port3 acts in 2s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port3 acts in 1s'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port3 acts in 1s')
+	led_on_off(1, Color(77, 7, 0))
+	lcd_new_line2 = 'Port3 acting now'
+	screen.display_data(lcd_new_line1, lcd_new_line2)
+	print('Port3 acting now')
+	led_on_off(0.5, Color(77, 7, 0))
+	pwm.set_pwm(3, 0, 300)
+start_up()
+
 
 def ctrl_range(raw, max_genout, min_genout):
 	global lcd_new_line2, LED_set
