@@ -5,7 +5,7 @@ Setting up in a Raspberry Pi may take you a lot of time, and there are too many 
 
 NOTE: This setup.py program is needed to download and install a lot of applications and libraries, and sometimes the server or internet may break down, which may lead to some problems that the setup.py could not fix. Then you must set up a raspberry pi yourself, by following the instructions of next chapter named Set Up a Raspberry Pi.
 
-Download the program of the PiCar-B.
+Download the program of the RaspArm.
 Input the code below to download: (Note that the commands entered here must be in lowercase)
 sudo git clone https://github.com/adeept/rasparm.git
 Then setup：
